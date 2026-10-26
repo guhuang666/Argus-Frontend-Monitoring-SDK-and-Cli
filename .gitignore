@@ -8,3 +8,6 @@ node_modules/
 # 偶发产物
 *.log
 dist/
+
+# npm pack 产物
+*.tgz
