@@ -1,161 +1,188 @@
 # Argus-Util
 
-Argus 监控平台的**随包内置工具**：浏览器 SDK + Sourcemap 上传 CLI。
+Argus 前端监控平台的采集端。一个 npm 包，两个入口：
 
-它默认**随宿主项目拷入使用**（把整个文件夹放到项目根），也可以在 `Argus-Util` 里 `npm run build` 出一个标准 npm 包（`dist/` + `bin`，见第七节）。
+| 入口 | 用途 | 形态 |
+| --- | --- | --- |
+| `import { initArgus } from 'argus-util'` | 浏览器 SDK：错误 / 面包屑 / Web Vitals / 会话与用户 | 零运行时依赖，仅 ESM |
+| `npx argus-cli` | Sourcemap 上传 | Node CLI |
 
 ---
 
-## 一、三步接入
+## 快速开始
 
-### 1. 拷贝
+### 1. 安装
 
-```
-你的项目/
-└── Argus-Util/          ← 把整个文件夹放到项目根
-```
-
-### 2. 配 `.env`（放到项目根，和 `package.json` 同级）
-
-```ini
-# 公钥：会被打进浏览器 bundle（Vite 只内联 VITE_ 前缀的变量）
-VITE_ARGUS_KEY=argus_pub_xxxxxxxx
-
-# 私钥：CLI 上传 Sourcemap 用。绝不能加 VITE_ 前缀
-ARGUS_SECRET=argus_sec_xxxxxxxx
+```powershell
+npm i https://github.com/guhuang666/Argus-Frontend-Monitoring-SDK-and-Cli/releases/download/v0.1.0/argus-util-0.1.0.tgz
 ```
 
-> **为什么两把钥匙能放在同一个文件里？**
-> Vite 只把 `VITE_` 前缀的变量注入 `import.meta.env` 并内联进 bundle。
-> `ARGUS_SECRET` 没有前缀，所以它只在本机/CI 里可见，永远不会进前端产物。
-> 这不是"小心别写错"，而是 Vite 的机制。
+不想走包，也可以把 `sdk/index.ts` 拷进宿主源码直供编译 —— 两者取舍见「两种接入方式」。
 
-别忘了在 `.gitignore` 里加一行 `.env`。
-
-### 3. 装 SDK（`src/main.tsx`）
+### 2. SDK：三行接入
 
 ```ts
-import { initArgus } from '../Argus-Util/sdk/index.ts'
+// 必须在模块作用域调用。放进 useEffect 会因 StrictMode 执行两次而重复挂监听器。
+import { initArgus } from 'argus-util'
 
 initArgus({
-  // Vite 构建时把 VITE_ARGUS_KEY 替换成字面量；它出现在浏览器里是正常的
-  key: import.meta.env.VITE_ARGUS_KEY,
-  release: import.meta.env.VITE_ARGUS_RELEASE ?? 'dev',
-  environment: import.meta.env.VITE_ARGUS_ENV ?? 'local',
+  key: 'argus_pub_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  release: 'web@1.2.4',
+  environment: 'production',
 })
 ```
 
-**必须在模块作用域调用**，不要放进 `React.useEffect` —— StrictMode 会让 effect 执行两次，于是每个错误上报两遍。
+| 配置项 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `key` | string | 无 | 项目公钥。不配则所有上报 401，SDK 会在 init 时 `console.warn` |
+| `release` | string | 无 | ≤100 字符。**必须与 CLI 的 `--release` 逐字节一致**，否则堆栈永远"未符号化" |
+| `environment` | string | 无 | ≤50 字符，写入 `error_events.environment`，看板按环境筛选的依据 |
+| `getUser` | `() => {id} \| string \| number \| null` | 无 | 每次上报调用一次，须同步、轻量、不抛错 |
+| `userSources` | string[] | 6 个内置源 | 语法 `window.K` / `localStorage:K` / `jwt:K`；传 `[]` 关闭自动探测 |
+| `anonymousId` | boolean | `true` | 拿不到身份时退化为匿名设备 ID（localStorage，键名带项目后缀） |
 
-还要把 SDK 加进 `tsconfig.json` 的 `include`，否则 `tsc -b` 会报"不在 rootDir 内"：
+**自动采集**（宿主零代码）：
 
-```jsonc
-"include": ["src", "Argus-Util/sdk/index.ts"]
+- 错误三通道：`onerror`（捕获阶段）、`unhandledrejection`、资源加载失败
+- 面包屑四类：点击 / 路由 / 请求 / 控制台，环形缓冲 **50** 条
+- Web Vitals：LCP / CLS / INP，含元素与 `inp_phase` 归因
+- 会话：30 分钟静默、跨天、时钟回拨都会切新会话（`localStorage: argus_session`）
+- 用户：`getUser` → 6 个内置探测源 → 匿名设备 ID
+
+**上报契约**：
+
+| 通道 | 地址 | 鉴权 | 时机 |
+| --- | --- | --- | --- |
+| 错误 | `POST http://localhost:3000/api/v1/error` | 头 `X-Argus-Key` | 每条错误一个请求，`keepalive: true` |
+| 性能 | `POST http://localhost:3000/api/v1/performance` | 头 `X-Argus-Key` | 页面**首次** `hidden` / `pagehide`，只发一次 |
+
+⚠️ 两个地址在源码里**硬编码**（`sdk/index.ts:235,238`）。换后端必须改源码重新构建。
+
+### 3. CLI：上传 Sourcemap
+
+```powershell
+# ① 看清单（不联网、不需要私钥）
+npx argus-cli --release web@1.2.4 --dir ./dist --dry-run
+
+# ② 真传
+npx argus-cli --release web@1.2.4 --dir ./dist
 ```
+
+私钥从**当前工作目录**的 `.env` 读（只认 cwd，不读 shell 环境变量）：
+
+```ini
+ARGUS_SECRET=argus_sec_xxxxxxxx
+```
+
+| 参数 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `--release` | ✅ | — | ≤100 字符 |
+| `--dir` | ✅ | — | 构建产物目录，必须存在 |
+| `--dry-run` | | false | 只打印清单；不需要私钥；有非法路径时退出码 1 |
+| `--url-prefix` | | `/` | 产物部署前缀，对应 Vite 的 `base` |
+| `--endpoint` | | `http://localhost:3000` | 服务端地址 |
+| `--secret` | | 读 `.env` | 临时覆盖私钥（CI 注入用） |
+| `--concurrency` | | `4` | 1~16 的整数 |
+| `--help` | | — | 打印用法 |
+
+**三条对齐规则**，错一条就会出现"传了 map 却永远未符号化"：
+
+1. `--release` = SDK 的 `release`；
+2. `--url-prefix` = 产物部署前缀；
+3. 公私钥属于**同一个项目**（私钥决定传到哪个项目，URL 里不带 projectId）。
+
+其他行为：
+
+- `artifact_path` = `--dir` 内的相对路径，**去掉 `.map` 后缀**、以 `/` 开头（存的是产物路径，因为浏览器堆栈里出现的是 `.js`）；
+- 重传幂等：同一 `(release_id, artifact_path)` 覆盖，输出 `↻`；首次为 `✓`；
+- 单个 `.map` 上限 50 MB（服务端校验）；
+- 退出码：`0` 全成功 / `1` 参数错误或有文件失败。
 
 ---
 
-## 二、上传 Sourcemap
+## 已知限制（v0.1.0）
 
-```powershell
-# 方式 A：直接跑源码（Node ≥ 23.6，不需要构建）
-# 只打印清单，不发请求（不需要私钥）
-node Argus-Util/cli/index.ts --release demo@1.0.0 --dir ./dist --dry-run
+| 限制 | 后果 | 出处 |
+| --- | --- | --- |
+| 单条直发，无批量 / 无重试 / 无离线补发 | 网络失败即丢事件 | `sdk/index.ts:1325-1327` |
+| 无退场通道（`sendBeacon` 降级、64 KB 裁剪均未实现），只有 `fetch + keepalive` | 单条体积超预算时请求被浏览器拒绝，`.catch` 静默吞掉 | `:1322-1323,1340` |
+| 无采样 | `sampleRate` 参数不存在 | — |
+| 上报地址硬编码 | 换环境必须改源码重建 | `:235,238` |
+| 字段不截断 | 超限整条被后端 400 丢弃 | 见下 |
+| 每次上报都 `console.log` 成功/失败 | 生产环境控制台噪音 | `:1343-1347` |
+| `initArgus` 非幂等 | 重复调用会重复挂监听器、重复上报 | `:1384` |
+| 性能只在首次 `hidden` 上报一次；INP 取最差不取 P98 | 切走再回来的指标不补报 | `:17-20` |
+| 性能事件不带 `release` / `environment` | 性能趋势无法按版本切分（后端 DTO 尚未接收这两个字段） | `:164-212` |
+| 只有 ESM 产物 | `<script>` 直引需自行打包（未提供 IIFE） | `package.json:12-18` |
 
-# 真传（私钥从当前目录的 .env 读）
-node Argus-Util/cli/index.ts --release demo@1.0.0 --dir ./dist
-```
-
-```powershell
-# 方式 B：构建后跑产物（Node ≥ 18）
-cd Argus-Util; npm i; npm run build; cd ..
-
-node Argus-Util/dist/cli/index.js --release demo@1.0.0 --dir ./dist --dry-run
-node Argus-Util/dist/cli/index.js --release demo@1.0.0 --dir ./dist
-```
-
-> 装成 npm 包之后，命令名是 `argus-cli`（`bin` 指向 `dist/cli/index.js`），
-> 即 `npx argus-cli --release ...`。两种方式的行为完全一致，区别只是跑源码还是跑编译产物。
-
-上传地址里**没有项目 id**：私钥本身就是项目级凭据，服务端 `sha256()` 反查就知道传到哪个项目。所以你不可能"传错项目"—— 除非私钥本身拿错了。
-
-### ⚠️ `--release` 必须和 SDK 里的 `release` 逐字节一致
-
-两个字符串不一致时：
-
-- 上传会**成功**（201）
-- 看板**不会报任何错**
-- 但堆栈永远显示"未符号化"
-
-因为 Worker 是拿「事件里的 project_id + release」去查 map 的。
-
-推荐做法：**版本号只算一次，同时注入构建和上传**（`测试代码/demo-app/scripts/release.mjs` 是参考实现）。
+后端入参上限（超了整条 400）：`message ≤ 2000`、`stack ≤ 64 KB`、`url ≤ 2048`、`user_agent ≤ 512`、`release ≤ 100`、`environment ≤ 50`、`user.id ≤ 100`。
 
 ---
 
-## 三、目录结构
+## 两种接入方式
+
+| | **npm 包（推荐）** | 源码直供 |
+| --- | --- | --- |
+| 用法 | `npm i <tgz 地址>`，`npx argus-cli` 可用 | 把 `sdk/index.ts` 拷进宿主 |
+| 依赖 | 无 | 宿主需 TS 并能转译 `.ts` |
+| 类型 | 随包 `.d.ts` | 用宿主自己的 tsconfig |
+| 升级 | 换 URL 重装 | 手动覆盖文件 |
+
+拷源码时记得把 SDK 加进宿主 `tsconfig.json` 的 `include`，否则 `tsc` 会报"不在 rootDir 内"；此时 CLI 只能用 `node cli/index.ts`（Node ≥23.6）或先 `npm run build` 再跑 `dist/cli/index.js`。
+
+---
+
+## 目录与构建
 
 ```
 Argus-Util/
-├── sdk/index.ts        浏览器 SDK（源码直供宿主 import，不编译）
-├── cli/                CLI 源码
-│   ├── index.ts        命令行入口
-│   ├── discover.ts     找 .map 文件
-│   ├── paths.ts        本地路径 → 站点 pathname
-│   ├── upload.ts       multipart 上传 + 并发 + 重试
-│   └── tsconfig.json   只做类型检查（cli 下不再有自己的 package.json）
-├── dist/               构建产物（npm run build 生成，不进版本库）
-│   ├── sdk/index.js    ESM 入口（package.json 的 main/exports）
-│   ├── sdk/index.d.ts  类型声明（package.json 的 types）
-│   └── cli/index.js    CLI 产物（package.json 的 bin）
-├── .env.example        凭据模板（不含真实值，可提交）
-├── .gitignore
-└── package.json        build / typecheck / upload 脚本
+├── sdk/index.ts     浏览器 SDK（唯一入口）
+├── cli/             CLI：index / discover / paths / upload
+├── dist/            npm run build 产物（sdk: ESM + d.ts；cli: ESM）
+├── package.json     build / typecheck / pack
+└── .env.example     凭据模板
+```
+
+```powershell
+npm i                # 只装构建期依赖（tsup / typescript）
+npm run build        # → dist/sdk 与 dist/cli
+npm run typecheck    # 只类型检查，不产出
+npm pack             # 打成 argus-util-<version>.tgz（只含 dist + README + package.json）
 ```
 
 ---
 
-## 四、红线
+## 安全红线
 
 | 禁止 | 后果 |
-|---|---|
-| 给 `ARGUS_SECRET` 加 `VITE_` 前缀 | 私钥被打进浏览器 bundle，任何人可见 |
-| 在前端代码里写 `process.env.ARGUS_SECRET` | 同上，可能被构建工具内联 |
-| 提交 `.env` | 私钥进了 Git 历史，只能吊销重发 |
-| 用公钥替换私钥去上传 | 401（两类凭据能力完全不同） |
+| --- | --- |
+| 给 `ARGUS_SECRET` 加 `VITE_` 前缀 | 私钥被内联进浏览器 bundle，任何人可见 |
+| 提交 `.env` | 私钥进 git 历史，只能重建钥匙 |
+| 用公钥上传 map / 用私钥上报 | 401（两类凭据能力完全不同） |
+| 在 CI 日志或命令行回显完整 `--secret` | 私钥进日志；参数还会进 shell history 与进程列表 |
 
 ---
 
-## 五、环境要求
+## 环境要求
 
-- Node **≥ 18**（跑 `dist/` 产物）；如果直接跑源码 `cli/index.ts`，需要 **≥ 23.6**（Node 内置类型擦除，不需要 ts-node）
-- 宿主：TypeScript + Vite（SDK 是 TS 源码，其他构建工具需要自行加编译步骤）
+- 跑 `dist/` 产物与 CLI：**Node ≥ 18**
+- 直接跑 `cli/index.ts` 源码：**Node ≥ 23.6**（内置类型擦除，不需要 ts-node）
+- SDK 运行环境：Chrome / Edge / Firefox / Safari 近两个大版本；`crypto.randomUUID` 不可用时自动降级
+- 宿主构建工具：任何支持 ESM 的（Vite / Webpack / Rollup / esbuild），SDK 本身零依赖
 
 ---
 
-## 六、构建与打包
+## 发布新版本
 
-```bash
-cd Argus-Util
-npm i
-npm run build      # 产出 dist/sdk（ESM + .d.ts）与 dist/cli
-npm run typecheck  # 只做类型检查，不产出文件
-npm pack           # 打成 tarball（只含 dist/ 与 README/package.json）
+```powershell
+# 1. 版本号有两处，没有单一真源，必须手动对齐
+#    package.json 的 "version"
+#    sdk/index.ts 的 SDK_VERSION（会作为 event.sdk.version 上报）
+npm run build
+npm pack
+
+# 2. 建 Release 并上传 tgz；tag 不要复用
+gh release create v0.2.0 argus-util-0.2.0.tgz -t "argus-util v0.2.0" -n "变更说明"
 ```
 
-包入口有两个，各管一件事：
-
-| 用途 | 字段 | 指向 |
-|---|---|---|
-| `import { initArgus } from 'argus-util'` | `main` / `exports` / `types` | `dist/sdk/index.js` + `index.d.ts` |
-| `npx argus-cli` | `bin` | `dist/cli/index.js` |
-
----
-
-## 七、升级
-
-拷进来的副本不会自动更新。更新时：
-
-1. 从 Argus 仓库重新拷 `sdk/` 和 `cli/`（覆盖）
-2. 保留自己的 `.env`
-3. 重新跑一次 `--dry-run` 确认路径换算没变
+宿主把安装 URL 里的版本号换成新 tag 即可升级。
