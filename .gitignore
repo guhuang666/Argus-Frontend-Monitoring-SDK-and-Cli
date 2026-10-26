@@ -1,0 +1,10 @@
+# 依赖（cli/ 下有一套 typescript，只用于类型检查）
+node_modules/
+
+# 凭据：绝不提交
+.env
+.env.local
+
+# 偶发产物
+*.log
+dist/

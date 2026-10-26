@@ -1,0 +1,23 @@
+{
+  // 只做类型检查，不产出文件。
+  //
+  // SDK 是**源码直接给宿主用**的（宿主用 Vite/TS 直接 import 这个 .ts），
+  // 所以这里不需要 build 配置，只需要让编辑器和 `tsc -p .` 看懂 sdk/ 下的文件。
+  //
+  // 宿主项目的 tsconfig 里要把 sdk/index.ts 加进 include（见 README），
+  // 否则 `tsc -b` 会报"文件不在 rootDir 内"。
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    // Bundler：和 Vite 一致的解析规则，允许 import './x.ts' 这种带后缀的写法
+    "moduleResolution": "Bundler",
+    // SDK 只跑在浏览器：不要 DOM 之外的库，也不要 node 类型
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["sdk/**/*.ts"]
+}

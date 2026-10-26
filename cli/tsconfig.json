@@ -1,0 +1,30 @@
+{
+  // cli 是独立的小包，不吃 backend 的 tsconfig。
+  //
+  // 只需要"类型检查"（noEmit），不需要编译产物 —— Node 24 能直接跑 .ts，
+  // 这个 tsconfig 存在的唯一目的是让编辑器和 `npx tsc -p .` 看懂这些文件。
+  "compilerOptions": {
+    "target": "ES2022",
+    // NodeNext = 按 Node 的真实规则解析模块：支持 "node:fs" 前缀、
+    // 按 package.json 的 type 判断 ESM/CJS
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    // 关键开关：Node 运行 .ts 时，import 必须带 .ts 后缀（'./paths.ts'）。
+    // 不打开它，TS 会把每一行 import 都判成错误 —— 这是纯 ESM 时代的新规矩，
+    // 和你在 backend（CommonJS + 无后缀）里的习惯正好相反
+    "allowImportingTsExtensions": true,
+    // 上面那个选项只在"不产出文件"时合法，所以必须 noEmit
+    "noEmit": true,
+
+    // process / Buffer / console 这些都来自 @types/node，
+    // 不写这一行编辑器就满屏"找不到 process"
+    "types": ["node"],
+
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["**/*.ts"]
+}

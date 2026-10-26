@@ -1,0 +1,38 @@
+{
+  "name": "argus-util",
+  "version": "0.1.0",
+  "description": "Argus 随包内置工具：浏览器 SDK + Sourcemap 上传 CLI",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./dist/sdk/index.js",
+  "types": "./dist/sdk/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/sdk/index.d.ts",
+      "import": "./dist/sdk/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "argus-cli": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p . && tsc -p cli",
+    "build": "npm run build:sdk && npm run build:cli",
+    "build:sdk": "tsup sdk/index.ts --format esm --target es2020 --dts --out-dir dist/sdk --clean",
+    "build:cli": "tsup cli/index.ts --format esm --target node18 --out-dir dist/cli --clean",
+    "upload": "node dist/cli/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsup": "^9.0.0",
+    "typescript": "^6.0.3"
+  }
+}
