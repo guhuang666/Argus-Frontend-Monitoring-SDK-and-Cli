@@ -237,6 +237,19 @@ export const ENDPOINT = 'http://localhost:3000/api/v1/error';
 /** 性能指标上报地址 */
 export const PERF_ENDPOINT = 'http://localhost:3000/api/v1/performance';
 
+/**
+ * 错误事件的**批量**上报地址。
+ *
+ * 为什么单开一条：跨域 + 自定义头意味着每个请求前面还要打一次 OPTIONS 预检，
+ * 所以「1 条错误 = 2 次往返」。攒批之后是「N 条错误 = N/50 个请求」。
+ *
+ * 旧的单条 ENDPOINT 保留不删（宿主可能有 import，面包屑判定也还在用它的路径），
+ * 但错误事件已经全部走这条批量通道。
+ *
+ * 不导出：和 ENDPOINT 一样是硬编码常量，导出只会让人以为可以换。
+ */
+const ERROR_BATCH_ENDPOINT = 'http://localhost:3000/api/v1/error/batch';
+
 /** 上报公钥的前缀。只做形状检查，真正的合法性由服务端判断 */
 const PUBLIC_KEY_PREFIX = 'argus_pub_';
 
@@ -252,11 +265,12 @@ const IGNORED_SCHEME = /^(chrome|moz|safari|ms-browser)-extension:\/\//;
 /**
  * SDK 自己的上报地址（脱敏后），用来把自己的请求排除在面包屑之外。
  *
- * 这两个常量在模块加载时就算好了。它们依赖下面的 redact()，而函数声明会提升，
+ * 这三个常量在模块加载时就算好了。它们依赖下面的 redact()，而函数声明会提升，
  * 所以放在这里不构成初始化顺序问题。
  */
 const ENDPOINT_PATH = redact(ENDPOINT);
 const PERF_ENDPOINT_PATH = redact(PERF_ENDPOINT);
+const ERROR_BATCH_PATH = redact(ERROR_BATCH_ENDPOINT);
 
 /**
  * 运行期配置。
@@ -678,7 +692,9 @@ function perfUrl(href: string): string {
 
 /** 是不是 SDK 自己的上报请求 —— 自己的请求不该出现在宿主的面包屑里 */
 function isOwnRequest(path: string): boolean {
-  return path === ENDPOINT_PATH || path === PERF_ENDPOINT_PATH;
+  // 批量端点必须一起认：漏了它，每条批量上报都会给自己记一条 http 面包屑，
+  // 于是"出错前的用户轨迹"里全是监控系统自己的请求。
+  return path === ENDPOINT_PATH || path === PERF_ENDPOINT_PATH || path === ERROR_BATCH_PATH;
 }
 
 /** 挂一个采集器，失败只记日志：一个类目挂了不该拖垮其它类目（TC-07） */
@@ -1307,13 +1323,15 @@ function setupPerformance(): void {
 /* ==========================================================================
  * ⑦ 上报出口 + 入口
  * ========================================================================
- * 出口只有一条传输逻辑，上面两个薄壳（错误 / 性能）。
- * 两个出口必须分开的原因：/api/v1/error 的 DTO 只认错误事件的字段，而且后端
+ * 错误走批量（缓冲 → 满 50 条 / 每 5 s / 退场 → /api/v1/error/batch），
+ * 性能仍是退场时单发一条。
+ * 两者必须分开的原因：/api/v1/error 的 DTO 只认错误事件的字段，而且后端
  * ValidationPipe 开了 whitelist —— 性能字段发过去会被**静默剥掉**（不报错，数据凭空消失）。
+ * 性能也不进批量：它天然是"每次页面加载一条"，攒批一个请求都省不下来。
  * ========================================================================*/
 
 /**
- * 统一出口。错误事件与性能事件共用一套发送逻辑：
+ * 性能事件的出口（错误事件已改走下方的批量通道）。
  * POST JSON + keepalive（页面卸载时普通请求会被中断，keepalive 让浏览器把请求发完）。
  *
  * 公钥走请求头 X-Argus-Key。为什么不用 URL 上的 ?key=：
@@ -1352,13 +1370,143 @@ function transport(endpoint: string, payload: unknown, label: string): void {
   }
 }
 
+/* ── 批量缓冲 ────────────────────────────────────────────────────────────
+ *
+ * 一条错误一个请求太贵：跨域 + 自定义头意味着每个请求前还有一次 OPTIONS 预检，
+ * 所以「1 条错误 = 2 次往返」。攒批之后是「N 条错误 = N/50 个请求」。
+ *
+ * 触发只有三个：满 50 条、攒够 5 秒、页面要走了。
+ *
+ * ── 退场为什么"和平常一样"────────────────────────────────────────────────
+ * 早期设计给退场单独定了一套更小的预算（20 条 / 48 KB / 裁剪）。结论是
+ * 这里不需要：有 5 秒定时器兜着，关页时队列通常只有 0~3 条、几 KB。
+ * 所以退场与常规**只差一个 keepalive**：
+ *   · 常规批次页面还活着，普通 fetch 就够了，也不受 64 KB 限制；
+ *   · 退场时普通 fetch 会被浏览器在卸载时直接取消，必须 keepalive。
+ *
+ * ⚠ 已知代价：「错误风暴中正好关页」时队列可能堆到几十条、上百 KB，
+ * 而带 keepalive 的请求体超过 64 KB 会被浏览器整批拒绝（`.catch` 里能看到）。
+ * 这一版接受它：不做字节记账、不切块、不裁剪 —— 换来的是一个 50 行的批量层。
+ * ────────────────────────────────────────────────────────────────────── */
+
+/** 单批最多几条。满了立刻发，不等定时器 */
+const MAX_BATCH = 50;
+
+/** 攒批最长等多久。没有它，半天不出一条错的页面就永远发不出去 */
+const FLUSH_INTERVAL_MS = 5000;
+
+/**
+ * 待发的错误事件。
+ *
+ * 队列里放**事件本身**，不放序列化后的字符串 —— 序列化只在 sendBatch 里做一次，
+ * 免得同一件事在内存里存两份、改字段时还要同步维护第二份。
+ */
+const pendingErrors: CapturedError[] = [];
+let flushTimer: number | null = null;
+
+/**
+ * 武装定时器。
+ *
+ * 只在队列非空时武装一次，**不是 setInterval**：空队列每秒醒一次纯属浪费电池。
+ * 后台标签页里定时器会被浏览器节流到分钟级 —— 这个偏差可以接受，
+ * 因为退场那两个监听器仍会在页面真的走的时候把数据带出去。
+ *
+ * 回调里**不**把 flushTimer 置空：那是 flush() 的职责，见那里的注释。
+ * 同一个变量只在两处被写（这里设、flush 里清），读代码时"谁负责清"才有唯一答案。
+ */
+function armFlushTimer(): void {
+  if (flushTimer !== null) return;
+  flushTimer = window.setTimeout(() => {
+    flush(false);
+  }, FLUSH_INTERVAL_MS);
+}
+
+/** 入队：不再一条一发，满了或到点了才发 */
+function enqueue(payload: CapturedError): void {
+  pendingErrors.push(payload);
+  if (pendingErrors.length >= MAX_BATCH) return flush(false);
+  armFlushTimer();
+}
+
+/**
+ * 发一批错误事件。
+ *
+ * `keepalive` 是本函数唯一的调用差异：
+ *   · 常规 → false。keepalive 的请求体硬上限是 64 KB，而 50 条事件很容易超；
+ *     且常规批次发出时页面还活着，根本不需要它。
+ *   · 退场 → true。否则请求会在卸载时被浏览器取消，等于白攒。
+ */
+function sendBatch(events: readonly CapturedError[], keepalive: boolean): void {
+  try {
+    const key = options.key;
+    if (key === undefined) {
+      // 不静默：401 的根因在这里，而 401 在浏览器控制台只有一行"net::ERR"
+      console.warn('[argus] 错误事件未上报：没有配置项目公钥（initArgus({ key })）');
+      return;
+    }
+
+    fetch(ERROR_BATCH_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Argus-Key': key },
+      body: JSON.stringify({ events }),
+      keepalive,
+    })
+      .then((res) => {
+        if (res.ok) console.log(`[argus] 批量上报成功 HTTP ${res.status}（${events.length} 条）`);
+        else console.warn(`[argus] 批量上报失败 HTTP ${res.status}（${events.length} 条）`);
+      })
+      .catch((err) => {
+        // 退场批次超过 64 KB 时浏览器会在这里 reject。页面已经走了，只能记一笔
+        console.warn('[argus] 批量上报请求失败', err);
+      });
+  } catch (err) {
+    // JSON.stringify 循环引用、fetch 被宿主禁用等
+    console.warn('[argus] 批量上报异常', err);
+  }
+}
+
+/**
+ * 把缓冲区发出去。
+ *
+ * 幂等性靠"摘走即清空"实现，不设 flag：`visibilitychange` 与 `pagehide`
+ * 会在关页时连着触发两次，第二次进来队列已经空了，自然 no-op。
+ */
+function flush(exit: boolean): void {
+  // ⚠ 这两行必须是函数体的第一件事。
+  //  定时器那条路径也靠它归零（回调里刻意不写），一旦把它们挪到任何提前 return
+  //  之后，闹钟响完 flushTimer 就还是非 null 值 → armFlushTimer 会以为"还有闹钟
+  //  在等"直接返回 → 之后再也不会武装新定时器，只能等攒满 50 条才发。
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  if (pendingErrors.length === 0) return;
+
+  sendBatch(pendingErrors.splice(0), exit);
+}
+
+/**
+ * 挂退场发送。
+ *
+ * 两个事件都挂是刻意的：`visibilitychange → hidden` 覆盖"切标签页 / 最小化 / 关页"，
+ * `pagehide` 是最后一道保险（有些场景 hidden 之后页面就被冻结，pagehide 仍会派发）。
+ *
+ * 禁用 unload / beforeunload（FR-1.17）：移动端根本不保证触发，而 hidden 是必经状态。
+ */
+function installBatchExit(): void {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush(true);
+  });
+  window.addEventListener('pagehide', () => flush(true));
+}
+
 function report(payload: CapturedError): void {
   // 一条事件本身就是"用户还在"的证据 —— 顺手续一下会话寿命。
   // 放在这里而不是 common() 里：common() 已经在构造时有过一次 currentSession()，
   // 而 touchSession 带可见性判断，语义不同（这里是"确实要发出去了"）。
+  // 攒批之后"发出去"变成了"进队列"，但语义不变：这条事件确实产生了。
   touchSession();
-  console.log(`[argus] 即将上报 ${payload.mechanism} → ${payload.message.slice(0, 60)}`);
-  transport(ENDPOINT, payload, '错误事件');
+  enqueue(payload);
 }
 
 /** 性能事件上报。走独立出口，理由见本段开头 */
@@ -1414,7 +1562,8 @@ export function initArgus(opts: ArgusOptions = {}): void {
   }
 
   console.log(
-    `[argus] SDK 已挂载，上报地址 ${ENDPOINT}` +
+    `[argus] SDK 已挂载，错误上报地址 ${ERROR_BATCH_ENDPOINT}` +
+      `（${MAX_BATCH} 条 / ${FLUSH_INTERVAL_MS / 1000}s 攒批）` +
       (options.release ? `，版本 ${options.release}` : '（未配置版本，Sourcemap 不会生效）'),
   );
 
@@ -1441,6 +1590,10 @@ export function initArgus(opts: ArgusOptions = {}): void {
 
   // —— 错误采集：两条 window 级通道 ——
   safeInstall('错误通道', installErrorChannels);
+
+  // —— 批量退场：页面走之前把缓冲里的错误发完 ——
+  // 必须和错误通道一起挂：只挂通道不挂退场，关页时缓冲区里那几条就白攒了。
+  safeInstall('批量退场', installBatchExit);
 
   // —— 性能采集：三个观察器 + 退场上报 ——
   safeInstall('性能采集', setupPerformance);
