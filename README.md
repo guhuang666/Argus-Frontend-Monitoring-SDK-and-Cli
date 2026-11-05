@@ -14,7 +14,7 @@ Argus 前端监控平台的采集端。一个 npm 包，两个入口：
 ### 1. 安装
 
 ```powershell
-npm i https://github.com/guhuang666/Argus-Frontend-Monitoring-SDK-and-Cli/releases/download/v0.1.0/argus-util-0.1.0.tgz
+npm i https://github.com/guhuang666/Argus-Frontend-Monitoring-SDK-and-Cli/releases/download/v0.2.0/argus-util-0.2.0.tgz
 ```
 
 不想走包，也可以把 `sdk/index.ts` 拷进宿主源码直供编译 —— 两者取舍见「两种接入方式」。
@@ -53,10 +53,10 @@ initArgus({
 
 | 通道 | 地址 | 鉴权 | 时机 |
 | --- | --- | --- | --- |
-| 错误 | `POST http://localhost:3000/api/v1/error` | 头 `X-Argus-Key` | 每条错误一个请求，`keepalive: true` |
-| 性能 | `POST http://localhost:3000/api/v1/performance` | 头 `X-Argus-Key` | 页面**首次** `hidden` / `pagehide`，只发一次 |
+| 错误 | `POST http://localhost:3000/api/v1/error/batch`（body `{ events: [...] }`） | 头 `X-Argus-Key` | 攒批：满 **50** 条 / 每 **5 s** / 退场；常规批次 `keepalive: false`，**退场批次 `keepalive: true`** |
+| 性能 | `POST http://localhost:3000/api/v1/performance` | 头 `X-Argus-Key` | 页面**首次** `hidden` / `pagehide`，只发一次；`keepalive: true` |
 
-⚠️ 两个地址在源码里**硬编码**（`sdk/index.ts:235,238`）。换后端必须改源码重新构建。
+⚠️ 两个地址在源码里**硬编码**（`sdk/index.ts:235,238,251`）。换后端必须改源码重新构建。
 
 ### 3. CLI：上传 Sourcemap
 
@@ -100,17 +100,18 @@ ARGUS_SECRET=argus_sec_xxxxxxxx
 
 ---
 
-## 已知限制（v0.1.0）
+## 已知限制（v0.2.0）
 
 | 限制 | 后果 | 出处 |
 | --- | --- | --- |
-| 单条直发，无批量 / 无重试 / 无离线补发 | 网络失败即丢事件 | `sdk/index.ts:1325-1327` |
-| 无退场通道（`sendBeacon` 降级、64 KB 裁剪均未实现），只有 `fetch + keepalive` | 单条体积超预算时请求被浏览器拒绝，`.catch` 静默吞掉 | `:1322-1323,1340` |
+| 错误已批量（满 50 条 / 每 5 s / 退场），但**批次失败不重试、不落盘补发** | 网络抖动或离线期间的整批事件直接丢；`.catch` 里只有一行 `console.warn` | `sdk/index.ts:1424-1429,1458-1461` |
+| 退场通道只有 `fetch + keepalive`：无 `sendBeacon` 降级，也不切块、不做字节记账 | 错误风暴中正好关页时，批次超 64 KB 会被浏览器**整批**拒绝，`.catch` 里只有一行 `console.warn` | `:1383-1389,1448-1461` |
+| 性能不进批量，仍单条直发 | 每次页面加载一个请求；攒批省不下来（它也天然只有一条） | `:1326-1330,1512-1524` |
 | 无采样 | `sampleRate` 参数不存在 | — |
-| 上报地址硬编码 | 换环境必须改源码重建 | `:235,238` |
+| 上报地址硬编码 | 换环境必须改源码重建 | `:235,238,251` |
 | 字段不截断 | 超限整条被后端 400 丢弃 | 见下 |
-| 每次上报都 `console.log` 成功/失败 | 生产环境控制台噪音 | `:1343-1347` |
-| `initArgus` 非幂等 | 重复调用会重复挂监听器、重复上报 | `:1384` |
+| 每次上报都 `console.log` 成功/失败 | 生产环境控制台噪音 | `:1361-1365,1455-1460` |
+| `initArgus` 非幂等 | 重复调用会重复挂监听器、重复上报 | `:1532` |
 | 性能只在首次 `hidden` 上报一次；INP 取最差不取 P98 | 切走再回来的指标不补报 | `:17-20` |
 | 性能事件不带 `release` / `environment` | 性能趋势无法按版本切分（后端 DTO 尚未接收这两个字段） | `:164-212` |
 | 只有 ESM 产物 | `<script>` 直引需自行打包（未提供 IIFE） | `package.json:12-18` |
@@ -182,7 +183,7 @@ npm run build
 npm pack
 
 # 2. 建 Release 并上传 tgz；tag 不要复用
-gh release create v0.2.0 argus-util-0.2.0.tgz -t "argus-util v0.2.0" -n "变更说明"
+gh release create v0.2.1 argus-util-0.2.1.tgz -t "argus-util v0.2.1" -n "变更说明"
 ```
 
 宿主把安装 URL 里的版本号换成新 tag 即可升级。

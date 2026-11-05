@@ -1,6 +1,6 @@
 {
   "name": "argus-util",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Argus 随包内置工具：浏览器 SDK + Sourcemap 上传 CLI",
   "license": "MIT",
   "type": "module",

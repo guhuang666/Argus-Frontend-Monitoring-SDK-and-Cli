@@ -254,7 +254,7 @@ const ERROR_BATCH_ENDPOINT = 'http://localhost:3000/api/v1/error/batch';
 const PUBLIC_KEY_PREFIX = 'argus_pub_';
 
 const SDK_NAME = 'argus.browser';
-const SDK_VERSION = '0.1.0';
+const SDK_VERSION = '0.2.0';
 
 /** 面包屑环形缓冲上限：满了顶掉最旧的 */
 const BREADCRUMB_MAX = 50;
