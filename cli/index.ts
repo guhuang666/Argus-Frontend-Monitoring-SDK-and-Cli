@@ -33,7 +33,23 @@ import { findSourcemaps } from './discover.ts';
 import { toArtifactPath, validateArtifactPath } from './paths.ts';
 import { uploadAll, type UploadResult, type UploadTarget } from './upload.ts';
 
-const DEFAULT_ENDPOINT = 'http://localhost:3000';
+/**
+ * 默认上传目标 —— Argus 服务端的公网地址。
+ *
+ * ── 为什么默认指向公网而不是 localhost ────────────────────────────────────
+ * 这个 CLI 是**对外发布的**（随 npm 包一起分发）：使用者是「接入了 Argus 的
+ * 网站开发者」，他们手上没有 Argus 的源码，更不会在本机跑一个后端。
+ * 他们要做的就是把自己的 .map 传到**我的服务器**上，所以默认值必须是公网地址。
+ *
+ * 默认 localhost 只对「Argus 开发者本人」方便，而那一个人可以用 --endpoint
+ * 显式覆盖。少数人的便利不该成为多数人的默认负担。
+ *
+ * ⚠️ 必须与 sdk/index.ts 里的 SERVER_URL 保持一致。
+ *    两处分开是因为 CLI 和 SDK 是两条独立的构建产物（见 package.json 的
+ *    build:sdk / build:cli），CLI 打包时引入整个浏览器 SDK 只会白白增大体积。
+ *    换机器时请两处一起改。
+ */
+const DEFAULT_ENDPOINT = 'http://47.119.32.85';
 const RELEASE_MAX = 100;
 
 /**
@@ -142,6 +158,9 @@ argus-cli —— 上传 Sourcemap 到 Argus
 
   # ③ 临时覆盖私钥
   node Argus-Util/cli/index.ts --release web@1.0.0 --dir ./dist --secret argus_sec_xxx
+
+  # ④ 本机开发时指回本地后端（默认目标是公网服务器）
+  node Argus-Util/cli/index.ts --release web@1.0.0 --dir ./dist --endpoint http://localhost:3000
 
 退出码
   0 全部成功   1 参数错误 / 有文件上传失败
