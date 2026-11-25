@@ -14,7 +14,7 @@ Argus 前端监控平台的采集端。一个 npm 包，两个入口：
 ### 1. 安装
 
 ```powershell
-npm i https://github.com/guhuang666/Argus-Frontend-Monitoring-SDK-and-Cli/releases/download/v0.2.0/argus-util-0.2.0.tgz
+npm i https://github.com/guhuang666/Argus-Frontend-Monitoring-SDK-and-Cli/releases/download/v0.3.0/argus-util-0.3.0.tgz
 ```
 
 不想走包，也可以把 `sdk/index.ts` 拷进宿主源码直供编译 —— 两者取舍见「两种接入方式」。
