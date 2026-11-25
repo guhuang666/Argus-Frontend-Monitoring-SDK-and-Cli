@@ -25,7 +25,7 @@ import type { ArgusOptions } from './types'
  * ⚠️ 唯一需要改的地方就是这一行。下面所有上报地址都由它派生。
  *    换机器时 CLI 的 DEFAULT_ENDPOINT（cli/index.ts）要一起改，两处没有单一真源。
  */
-export const SERVER_URL = 'http://ghargus.cn:8080';
+export const SERVER_URL = 'http://47.119.32.85:8080';
 
 /**
  * 上报地址。

@@ -53,8 +53,8 @@ initArgus({
 
 | 通道 | 地址 | 鉴权 | 时机 |
 | --- | --- | --- | --- |
-| 错误 | `POST http://ghargus.cn:8080/api/v1/error/batch`（body `{ events: [...] }`） | 头 `X-Argus-Key` | 攒批：满 **50** 条 / 每 **5 s** / 退场；常规批次 `keepalive: false`，**退场批次 `keepalive: true`** |
-| 性能 | `POST http://ghargus.cn:8080/api/v1/performance` | 头 `X-Argus-Key` | 页面**首次** `hidden` / `pagehide`，只发一次；`keepalive: true` |
+| 错误 | `POST http://47.119.32.85/api/v1/error/batch`（body `{ events: [...] }`） | 头 `X-Argus-Key` | 攒批：满 **50** 条 / 每 **5 s** / 退场；常规批次 `keepalive: false`，**退场批次 `keepalive: true`** |
+| 性能 | `POST http://47.119.32.85/api/v1/performance` | 头 `X-Argus-Key` | 页面**首次** `hidden` / `pagehide`，只发一次；`keepalive: true` |
 
 ⚠️ 服务端地址只在 `SERVER_URL` 一行（`sdk/config.ts:28`），三个端点都由它派生（`sdk/config.ts:36,39,52`）。换后端 = 改这一行 + 重新构建；CLI 的 `DEFAULT_ENDPOINT`（`cli/index.ts`）要一起改，两处没有单一真源。
 
@@ -80,7 +80,7 @@ ARGUS_SECRET=argus_sec_xxxxxxxx
 | `--dir` | ✅ | — | 构建产物目录，必须存在 |
 | `--dry-run` | | false | 只打印清单；不需要私钥；有非法路径时退出码 1 |
 | `--url-prefix` | | `/` | 产物部署前缀，对应 Vite 的 `base` |
-| `--endpoint` | | `http://ghargus.cn:8080` | 服务端地址；本机开发时传 `http://localhost:3000` |
+| `--endpoint` | | `http://47.119.32.85` | 服务端地址；本机开发时传 `http://localhost:3000` |
 | `--secret` | | 读 `.env` | 临时覆盖私钥（CI 注入用） |
 | `--concurrency` | | `4` | 1~16 的整数 |
 | `--help` | | — | 打印用法 |
