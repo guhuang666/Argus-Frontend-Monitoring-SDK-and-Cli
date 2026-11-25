@@ -52,7 +52,7 @@ export const PERF_ENDPOINT = `${SERVER_URL}/api/v1/performance`;
 export const ERROR_BATCH_ENDPOINT = `${SERVER_URL}/api/v1/error/batch`;
 
 export const SDK_NAME = 'argus.browser';
-export const SDK_VERSION = '0.2.0';
+export const SDK_VERSION = '0.3.0';
 
 /**
  * SDK 自己的上报地址（脱敏后），用来把自己的请求排除在面包屑之外。
