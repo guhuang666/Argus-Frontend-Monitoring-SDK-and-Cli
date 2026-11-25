@@ -104,14 +104,14 @@ ARGUS_SECRET=argus_sec_xxxxxxxx
 
 | 限制 | 后果 | 出处 |
 | --- | --- | --- |
-| 错误已批量（满 50 条 / 每 5 s / 退场），但**批次失败不重试、不落盘补发** | 网络抖动或离线期间的整批事件直接丢；`.catch` 里只有一行 `console.warn` | `sdk/errors.ts:166-171,196-203` |
-| 退场通道只有 `fetch + keepalive`：无 `sendBeacon` 降级，也不切块、不做字节记账 | 错误风暴中正好关页时，批次超 64 KB 会被浏览器**整批**拒绝，`.catch` 里只有一行 `console.warn` | `sdk/errors.ts:173-180,190-203` |
-| 性能不进批量，仍单条直发 | 每次页面加载一个请求；攒批省不下来（它也天然只有一条） | `sdk/perf.ts:368-379` |
+| 错误已批量（满 50 条 / 每 5 s / 退场），但**批次失败不重试、不落盘补发** | 网络抖动或离线期间的整批事件直接丢；`.catch` 里只有一行 `console.warn` | `sdk/errors.ts:160-165,190-197` |
+| 退场通道只有 `fetch + keepalive`：无 `sendBeacon` 降级，也不切块、不做字节记账 | 错误风暴中正好关页时，批次超 64 KB 会被浏览器**整批**拒绝，`.catch` 里只有一行 `console.warn` | `sdk/errors.ts:167-174,184-196` |
+| 性能不进批量，仍单条直发 | 每次页面加载一个请求；攒批省不下来（它也天然只有一条） | `sdk/perf.ts:353-364` |
 | 无采样 | `sampleRate` 参数不存在 | — |
 | 上报地址无运行时配置 | 换环境必须改 `SERVER_URL` 并重新构建（CLI 另有一处 `DEFAULT_ENDPOINT`） | `sdk/config.ts:28` |
 | 字段不截断 | 超限整条被后端 400 丢弃 | 见下 |
-| 每次上报都 `console.log` 成功/失败 | 生产环境控制台噪音 | `sdk/perf.ts:336-340,sdk/errors.ts:197-203` |
-| 性能只在首次 `hidden` 上报一次；INP 取最差不取 P98 | 切走再回来的指标不补报 | `sdk/perf.ts:60,249-251` |
+| 每次上报都 `console.log` 成功/失败 | 生产环境控制台噪音 | `sdk/perf.ts:321-325,sdk/errors.ts:190-197` |
+| 性能只在首次 `hidden` 上报一次；INP 取最差不取 P98 | 切走再回来的指标不补报 | `sdk/perf.ts:60,239-242` |
 | 性能事件不带 `release` / `environment` | 性能趋势无法按版本切分（后端 DTO 尚未接收这两个字段） | `sdk/types.ts:126-174` |
 | LCP 直接取 `renderTime`，不做降级 | 跨域图片未配 `Timing-Allow-Origin` 时会报 **0 ms**（看板上像"完美"） | `sdk/perf.ts:146-147` |
 | 会话只按「30 分钟无活动」判定 | 挂机过夜、系统时间被回拨都不切新会话，会话数可能偏少 | `sdk/session.ts:10,25-38` |
