@@ -49,7 +49,7 @@ import { uploadAll, type UploadResult, type UploadTarget } from './upload.ts';
  *    build:sdk / build:cli），CLI 打包时引入整个浏览器 SDK 只会白白增大体积。
  *    换机器时请两处一起改。
  */
-const DEFAULT_ENDPOINT = 'http://47.119.32.85';
+const DEFAULT_ENDPOINT = 'http://47.119.32.85:8080';
 const RELEASE_MAX = 100;
 
 /**
